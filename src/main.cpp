@@ -3,13 +3,16 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <Wire.h>
-
+#include <TinyGPS++.h>
+#include <SPI.h>
+#include <SdFat.h>
+#include <uRTCLib.h>
 /*
 trzeba przerobic tak by menu bylo struktura kazda struktora z wlasnym poem na zmienna na nazwe i zmienna na opcje ktore submenu ma zawierac potem
 trzeba tez zrobic tablice tych struktur ta tablica bedzie przechowywac te glowne menu rowsy i kazdy row bedzie struktura- elementem tablicy struktur 
 i tylko zmienne sie bedzie wybierac i podawac funcji wyswietlajacej ktora tez naezy przerobic
 */
-
+#define SD_CS_PIN SS
 #define OLED_ADDR   0x3C
 #define btn1 33 //d3
 #define btn2 32 //d4
@@ -17,6 +20,10 @@ i tylko zmienne sie bedzie wybierac i podawac funcji wyswietlajacej ktora tez na
 
 #define del_btn1 400
 #define OLED_RESET 4
+
+#define gps_baud 9600
+#define RXD2 16
+#define TXD2 17
 //#define del_encoder 250
 
 int val;
@@ -50,6 +57,27 @@ struct menu_bar{
   byte submenu_t;
 };
 
+struct time_struct{
+
+uint8_t rtc_day,rtc_month, rtc_hour, rtc_minutes,rtc_seconds;
+uint16_t rtc_year;
+};
+
+struct time_struct time_holder={0,0,0,0,0,0};
+
+
+//global variables for gps readouts clarity
+double gps_lati=0;
+double gps_longi=0;
+double gps_alti=0;
+
+uint8_t gps_day=0;
+uint8_t gps_month=0;
+uint16_t gps_year=0;
+
+uint8_t gps_hour=0;
+uint8_t gps_minutes=0;
+uint8_t gps_seconds=0;
 void IRAM_ATTR isr1()
 {
 //noInterrupts();
@@ -83,14 +111,33 @@ void menu_row( int lp,const char txt[],int x_start,int *actual_pos);
 void submenu_type1(int *select,int *slider_pos);
 void submenu_display(int option);
 void submenu_type_def(int *select);
+
+void rtc_read_fcn(time_struct *ts);
+bool save_value_to_sd(double value,const char *filename,bool new_line);
+bool save_char_to_sd(char *txt,const char *filename,bool new_line);
+bool gps_values_read(uint8_t selector,double *lati,double *longi,double *alti,uint8_t *day,uint8_t *month,uint16_t *year,uint8_t *hour,uint8_t *minutes,uint8_t *sec);
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+File myFile;
+TinyGPSPlus gps;
+uRTCLib rtc;
+SdFat SD;
 Adafruit_SSD1306 OLED(128,64,&Wire,OLED_RESET);
 
 void setup() {
   Serial.begin(115200);
   Serial.println("Basic Encoder Test:");
+  Serial2.begin(gps_baud, SERIAL_8N1, RXD2, TXD2); //for gps communication
+  rtc.set_rtc_address(0x68);
+	rtc.set_model(URTCLIB_MODEL_DS3231);
  menu_slider_height=menu_slider_calc(&menu_rows,&menu_vertical_space);
+  while(!SD.begin(SD_CS_PIN,SD_SCK_MHZ(10)))
+  {
+    Serial.println("sd initialization failed!");
+    
+  }
+     Serial.println("sd initialization done.");
 
   pinMode(btn1,INPUT_PULLUP);
    pinMode(btn2,INPUT_PULLUP);
@@ -230,9 +277,90 @@ void loop()
       submenu_display(counter1);
     }
  flag4=0;
- //interrupts();
-}
 
+ //////////////////////////////////////test///////////////////////////////////////////////////////////////
+  bool flag=0;
+    while (Serial2.available() > 0){
+    if( gps.encode(Serial2.read())) flag =1;
+    }
+    if(flag)
+    {
+        //displayInfo();
+      
+          if(gps_values_read(1,&gps_lati,&gps_longi,&gps_alti,&gps_day,&gps_month,&gps_year,&gps_hour,&gps_minutes,&gps_seconds))
+          {
+            Serial.println("posit:");
+            Serial.println(gps_lati);
+            Serial.println(gps_longi);
+
+            save_char_to_sd((char *)"posit","gps_log.txt",1);
+            save_value_to_sd(gps_lati,"gps_log.txt",1);
+            save_value_to_sd(gps_longi,"gps_log.txt",1);
+          }else{
+            Serial.println("no gps pos found");
+            save_char_to_sd((char *)"no gps pos found","gps_log.txt",1);
+          }
+
+          if(gps_values_read(2,&gps_lati,&gps_longi,&gps_alti,&gps_day,&gps_month,&gps_year,&gps_hour,&gps_minutes,&gps_seconds))
+          {
+            Serial.println("date:");
+            Serial.println(gps_day);
+            Serial.println(gps_month);
+            Serial.println(gps_year);
+
+            save_char_to_sd((char *)"date","gps_log.txt",1);
+            save_value_to_sd(gps_day,"gps_log.txt",1);
+            save_value_to_sd(gps_month,"gps_log.txt",1);
+            save_value_to_sd(gps_year,"gps_log.txt",1);
+          }else{
+            Serial.println("no gps date found");
+            save_char_to_sd((char *)"no gps date found","gps_log.txt",1);
+          }
+
+          if(gps_values_read(3,&gps_lati,&gps_longi,&gps_alti,&gps_day,&gps_month,&gps_year,&gps_hour,&gps_minutes,&gps_seconds))
+          {
+            Serial.println("time::");
+            Serial.println(gps_hour);
+            Serial.println(gps_minutes);
+            Serial.println(gps_seconds);
+
+            save_char_to_sd((char *)"time","gps_log.txt",1);
+            save_value_to_sd(gps_hour,"gps_log.txt",1);
+            save_value_to_sd(gps_minutes,"gps_log.txt",1);
+            save_value_to_sd(gps_seconds,"gps_log.txt",1);
+          }else{
+            Serial.println("no gps time found");
+            save_char_to_sd((char *)"no gps time found","gps_log.txt",1);
+          }
+          rtc_read_fcn(&time_holder);
+
+    Serial.println("RTC DateTime: ");
+
+    Serial.print(time_holder.rtc_day);
+    Serial.print('/');
+    Serial.print(time_holder.rtc_month);
+    Serial.print('/');
+    Serial.print(time_holder.rtc_year);
+
+    Serial.print(' ');
+
+    Serial.print(time_holder.rtc_hour);
+    Serial.print(':');
+    Serial.print(time_holder.rtc_minutes);
+    Serial.print(':');
+    Serial.print(time_holder.rtc_seconds);
+
+
+  
+
+
+    flag=0;
+  //interrupts();
+
+
+  }
+/////////////////////////////////////end test//////////////////////////////////////////////
+}
 }
 
 int menu_slider_calc(int *rows,int *vert_space)
@@ -377,4 +505,102 @@ void submenu_type_def(int *select){
     OLED.setTextColor(WHITE);
 
     OLED.display(); //output 'display buffer' to screen  
+}
+
+
+bool gps_values_read(uint8_t selector,double *lati,double *longi,double *alti,uint8_t *day,uint8_t *month,uint16_t *year,uint8_t *hour,uint8_t *minutes,uint8_t *sec)
+{
+  switch (selector)
+  {
+    case 1:
+       if (!gps.location.isValid()) return 0;
+      *lati=gps.location.lat();
+      *longi=gps.location.lng();
+      *alti=gps.altitude.meters();
+    return 1;
+   
+    case 2:
+      if (!gps.date.isValid()) return 0;
+      *day=gps.date.month();
+      *month=gps.date.day();
+      *year=gps.date.year();
+    return 1;
+
+    case 3:
+       if (!gps.time.isValid()) return 0;
+      *hour=gps.time.hour();
+      *minutes=gps.time.minute();
+      *sec=gps.time.second();
+    return 1;
+
+    default:
+    *lati=0;
+    *longi=0;
+    *alti=0;
+    *day=0;
+    *month=0;
+    *year=0;
+    *hour=0;
+    *minutes=0;
+    *sec=0;
+    return 1;
+
+  //return 0; //if not able to connect to gps module at all chceck your connection
+
+ // return 1; //i f gps detected and readout got proper values or at least detected
+  }
+}
+
+bool save_char_to_sd(char *txt,const char *filename,bool new_line)
+{
+
+  myFile = SD.open(filename, FILE_WRITE);
+  if(myFile)
+  {
+    if(new_line)
+    {
+      myFile.println(txt);
+    }else{
+      myFile.print(txt);
+    }
+
+    myFile.close();
+    return 1;//file opened succesfully and text written to it
+  }
+  return 0;//file opening error
+}
+
+
+bool save_value_to_sd(double value,const char *filename,bool new_line)
+{
+
+  myFile = SD.open(filename, FILE_WRITE);
+  if(myFile)
+  {
+    if(new_line)
+    {
+      myFile.println(value);
+    }else{
+      myFile.print(value);
+    }
+
+    myFile.close();
+    return 1;//file opened succesfully and text written to it
+  }
+  return 0;//file opening error
+}
+
+void rtc_read_fcn(time_struct *ts)
+{
+
+ //Serial.print("RTC DateTime: ");
+  rtc.refresh();
+ ts->rtc_day=rtc.day();
+ ts->rtc_month=rtc.month();
+ ts->rtc_year=rtc.year();
+
+ ts->rtc_hour=rtc.hour();
+ ts->rtc_minutes=rtc.minute();
+ ts->rtc_seconds=rtc.second();
+	
 }
