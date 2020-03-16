@@ -14,14 +14,14 @@ i tylko zmienne sie bedzie wybierac i podawac funcji wyswietlajacej ktora tez na
 */
 #define SD_CS_PIN SS
 #define OLED_ADDR   0x3C
-#define btn1 33 //d3
-#define btn2 32 //d4
-#define btn3 27 //d5 do d8
+#define BTN1 33 //d3
+#define BTN2 32 //d4
+#define BTN3 27 //d5 do d8
 
-#define del_btn1 400
+#define DEL_BTN 450
 #define OLED_RESET 4
 
-#define gps_baud 9600
+#define GPS_BAUD 9600
 #define RXD2 16
 #define TXD2 17
 //#define del_encoder 250
@@ -128,7 +128,7 @@ Adafruit_SSD1306 OLED(128,64,&Wire,OLED_RESET);
 void setup() {
   Serial.begin(115200);
   Serial.println("Basic Encoder Test:");
-  Serial2.begin(gps_baud, SERIAL_8N1, RXD2, TXD2); //for gps communication
+  Serial2.begin(GPS_BAUD, SERIAL_8N1, RXD2, TXD2); //for gps communication
   rtc.set_rtc_address(0x68);
 	rtc.set_model(URTCLIB_MODEL_DS3231);
  menu_slider_height=menu_slider_calc(&menu_rows,&menu_vertical_space);
@@ -139,14 +139,14 @@ void setup() {
   }
      Serial.println("sd initialization done.");
 
-  pinMode(btn1,INPUT_PULLUP);
-   pinMode(btn2,INPUT_PULLUP);
-    pinMode(btn3,INPUT_PULLUP);
+  pinMode(BTN1,INPUT_PULLUP);
+   pinMode(BTN2,INPUT_PULLUP);
+    pinMode(BTN3,INPUT_PULLUP);
   
   //pinA_last=digitalRead(pinA_last);
- attachInterrupt(digitalPinToInterrupt(btn1),isr1,FALLING);
-attachInterrupt(digitalPinToInterrupt(btn2),isr2,FALLING);
- attachInterrupt(digitalPinToInterrupt(btn3),isr3,FALLING);
+ attachInterrupt(digitalPinToInterrupt(BTN1),isr1,FALLING);
+attachInterrupt(digitalPinToInterrupt(BTN2),isr2,FALLING);
+ attachInterrupt(digitalPinToInterrupt(BTN3),isr3,FALLING);
 
 
   OLED.begin(SSD1306_SWITCHCAPVCC,OLED_ADDR);
@@ -162,41 +162,37 @@ attachInterrupt(digitalPinToInterrupt(btn2),isr2,FALLING);
 void loop()
 {
   
-  unsigned long ac_time=millis();
+  unsigned long ac_time=millis();   // for calculating time delays, actual time value
 
- // flag1_1=(flag1 && ac_time-time_last_buton1_pressed>del_btn1)  ? 1:0;
-  //flag2_2=(flag2 && ac_time-time_last_buton2_pressed>del_btn1)  ? 1:0;
-  //flag3_3=(flag3 && ac_time-time_last_buton3_pressed>del_btn1)  ? 1:0;
+ // flag1_1=(flag1 && ac_time-time_last_buton1_pressed>DEL_BTN)  ? 1:0;
+  //flag2_2=(flag2 && ac_time-time_last_buton2_pressed>DEL_BTN)  ? 1:0;
+  //flag3_3=(flag3 && ac_time-time_last_buton3_pressed>DEL_BTN)  ? 1:0;
 
-  if(flag1 && ac_time-time_last_buton1_pressed>del_btn1)
+  if(flag1 && ac_time-time_last_buton1_pressed>DEL_BTN)
   {
     flag1=0;
-    flag4=1;
-  if(!flag_submenu)
-  {
-    ac_cursor_pos-=8;
-    counter1--;
-    if(ac_cursor_pos<0) 
-    {ac_cursor_pos=0;
-    counter1=1;
-    }
-     Serial.println(ac_cursor_pos);
-  }else if(flag_horizontal_slider1 && flag_submenu)
-  {
-    submenu_slid_pos-=8;
-  }else{
-        counter_submenu--;
-
-  }
-  
-    
-   time_last_buton1_pressed=millis();
-    //interrupts();
-     //portEXIT_CRITICAL(&mux);
+    flag4=1;  //display needs refresh when 1
+      if(!flag_submenu)
+      { //this happens when user isnt inside submenu main menu scrolling
+        ac_cursor_pos-=8;
+        counter1--;
+        if(ac_cursor_pos<0) 
+          {
+          ac_cursor_pos=0;
+          counter1=1;
+          }
+        Serial.println(ac_cursor_pos);  //for debugging
+      }else if(flag_horizontal_slider1 && flag_submenu) //when select button was pressed when on slider, slider active need to move it
+      {
+        submenu_slid_pos-=8;
+      }else{
+        counter_submenu--;  //move through  submenu items
+      }
+    time_last_buton1_pressed=millis(); // important to prevent oscillations fro mbutton pressing
   }
 
 /////////////////////////////////////////////////////////////////////////////////////middle button
-   if(flag2 && ac_time-time_last_buton2_pressed>del_btn1)
+   if(flag2 && ac_time-time_last_buton2_pressed>DEL_BTN)
   {
     flag2=0;
     flag4=1;
@@ -238,7 +234,7 @@ void loop()
      //portEXIT_CRITICAL(&mux);
   }
 /////////////////////////////////////////////////////////////////////////////////////
-   if(flag3 && ac_time-time_last_buton3_pressed>del_btn1)
+   if(flag3 && ac_time-time_last_buton3_pressed>DEL_BTN)
   {
      flag3=0;
     flag4=1;
@@ -332,7 +328,10 @@ void loop()
             Serial.println("no gps time found");
             save_char_to_sd((char *)"no gps time found","gps_log.txt",1);
           }
-          rtc_read_fcn(&time_holder);
+
+
+////////////////////////////////////time block/////////////////////////////////////
+    rtc_read_fcn(&time_holder);
 
     Serial.println("RTC DateTime: ");
 
@@ -368,7 +367,8 @@ int menu_slider_calc(int *rows,int *vert_space)
   int ret=(*vert_space/ *rows<1) ? 1: *vert_space/ *rows;
   return ret;
 }
-
+/*displays a main menu row
+place--text to display--x start write position--actual cursor position for inverting colour*/
 void menu_row( int lp,const char txt[],int x_start,int *actual_pos)
 {
   int y_tmp=(lp==0 || lp%8==0)  ? 0:(lp*8);
@@ -386,39 +386,43 @@ void menu_row( int lp,const char txt[],int x_start,int *actual_pos)
   }
  
 }
-
-void menu_display()
+/*main function to display things on the oled screen
+takes no parameters for now*/
+void menu_display(void)
 {
-   OLED.clearDisplay();
+    OLED.clearDisplay();
 
-OLED.setCursor(64,0);
-OLED.println(ac_cursor_pos);
-//OLED.setCursor(0,8);
-//OLED.println(counter1);
-OLED.setCursor(111,0);
-OLED.println(counter1);
-OLED.setCursor(117,0);
-OLED.println("/");
-OLED.setCursor(123,0);
+  OLED.setCursor(64,0);
+  OLED.println(ac_cursor_pos);
+  //OLED.setCursor(0,8);
+  //OLED.println(counter1);
+  OLED.setCursor(111,0);
+  OLED.println(counter1);
+  OLED.setCursor(117,0);
+  OLED.println("/");
+  OLED.setCursor(123,0);
 
-OLED.println(8);
-OLED.drawLine(126,8,126,63,WHITE);
-OLED.drawRect(125,counter1*7+1,3,menu_slider_height,WHITE);
+  OLED.println(8);
+  OLED.drawLine(126,8,126,63,WHITE);
+  OLED.drawRect(125,counter1*7+1,3,menu_slider_height,WHITE);
 
 
 
-menu_row(0,"pozycja:",0,&ac_cursor_pos);
-menu_row(1,"opcja1",0,&ac_cursor_pos);
-menu_row(2,"opcja2",0,&ac_cursor_pos);
-menu_row(3,"opcja3",0,&ac_cursor_pos);
-menu_row(4,"opcja4",0,&ac_cursor_pos);
-menu_row(5,"opcja5",0,&ac_cursor_pos);
-menu_row(6,"opcja6",0,&ac_cursor_pos);
-menu_row(7,"opcja7",0,&ac_cursor_pos);
+  menu_row(0,"pozycja:",0,&ac_cursor_pos);
+  menu_row(1,"opcja1",0,&ac_cursor_pos);
+  menu_row(2,"opcja2",0,&ac_cursor_pos);
+  menu_row(3,"opcja3",0,&ac_cursor_pos);
+  menu_row(4,"opcja4",0,&ac_cursor_pos);
+  menu_row(5,"opcja5",0,&ac_cursor_pos);
+  menu_row(6,"opcja6",0,&ac_cursor_pos);
+  menu_row(7,"opcja7",0,&ac_cursor_pos);
 
 
  OLED.display(); //output 'display buffer' to screen  
 }
+/*function for displaying submenus scontent
+takes number of the submenu to display
+for now--1 slider menu--2 rtc time and date set/display--other default empty submenu*/
 void submenu_display(int option)
 {
   switch (option)
@@ -435,7 +439,7 @@ void submenu_display(int option)
   }
   
 }
-
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void submenu_type1(int *select,int *slider_pos)
 {
   if(*select>3) *select=1;
@@ -489,7 +493,7 @@ void submenu_type1(int *select,int *slider_pos)
 
   OLED.display(); //output 'display buffer' to screen  
 }
-
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void submenu_type_def(int *select){
   OLED.clearDisplay();
 
@@ -506,8 +510,7 @@ void submenu_type_def(int *select){
 
     OLED.display(); //output 'display buffer' to screen  
 }
-
-
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 bool gps_values_read(uint8_t selector,double *lati,double *longi,double *alti,uint8_t *day,uint8_t *month,uint16_t *year,uint8_t *hour,uint8_t *minutes,uint8_t *sec)
 {
   switch (selector)
@@ -550,7 +553,7 @@ bool gps_values_read(uint8_t selector,double *lati,double *longi,double *alti,ui
  // return 1; //i f gps detected and readout got proper values or at least detected
   }
 }
-
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 bool save_char_to_sd(char *txt,const char *filename,bool new_line)
 {
 
@@ -569,8 +572,7 @@ bool save_char_to_sd(char *txt,const char *filename,bool new_line)
   }
   return 0;//file opening error
 }
-
-
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 bool save_value_to_sd(double value,const char *filename,bool new_line)
 {
 
@@ -589,7 +591,7 @@ bool save_value_to_sd(double value,const char *filename,bool new_line)
   }
   return 0;//file opening error
 }
-
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void rtc_read_fcn(time_struct *ts)
 {
 
