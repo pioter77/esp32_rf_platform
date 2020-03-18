@@ -7,6 +7,7 @@
 #include <SPI.h>
 #include <SdFat.h>
 #include <uRTCLib.h>
+
 /*
 trzeba przerobic tak by menu bylo struktura kazda struktora z wlasnym poem na zmienna na nazwe i zmienna na opcje ktore submenu ma zawierac potem
 trzeba tez zrobic tablice tych struktur ta tablica bedzie przechowywac te glowne menu rowsy i kazdy row bedzie struktura- elementem tablicy struktur 
@@ -17,6 +18,16 @@ i tylko zmienne sie bedzie wybierac i podawac funcji wyswietlajacej ktora tez na
 #define BTN1 33 //d3
 #define BTN2 32 //d4
 #define BTN3 27 //d5 do d8
+
+//kolejnosc menu row
+#define MENU_ORDER_RTC 2
+#define MENU_ORDER_GPS 1
+#define MENU_ORDER_SLIDER 0
+#define MENU_ORDER_NRF24 3
+#define MENU_ORDER_HC05 4
+#define MENU_ORDER_RF 5
+#define MENU_ORDER_EMPTY1 6
+#define MENU_ORDER_EMPTY2 7
 
 #define DEL_BTN 450
 #define OLED_RESET 4
@@ -65,8 +76,18 @@ uint16_t rtc_year;
 
 struct time_struct time_holder={0,0,0,0,0,0};
 
+struct gps_struct
+{
+  double gps_lati,gps_longi,gps_alti;
+  uint8_t gps_day,gps_month,gps_hour,gps_minutes,gps_seconds;
+  uint16_t gps_year;
+}gps_holder{0,0,0,0,0,0,0,0,0};
+
+
 
 //global variables for gps readouts clarity
+
+
 double gps_lati=0;
 double gps_longi=0;
 double gps_alti=0;
@@ -80,16 +101,14 @@ uint8_t gps_minutes=0;
 uint8_t gps_seconds=0;
 void IRAM_ATTR isr1()
 {
-//noInterrupts();
- //portENTER_CRITICAL(&mux);
+
 flag1=1;
 Serial.println("inter1");
 }
 
 void IRAM_ATTR isr2()
 {
-//noInterrupts();
-//portENTER_CRITICAL(&mux);
+
 flag2=1;
 Serial.println("inter2");
 //flag2=0;
@@ -98,8 +117,7 @@ Serial.println("inter2");
 
 void IRAM_ATTR isr3()
 {
-//noInterrupts();
-//portENTER_CRITICAL(&mux);
+
 flag3=1;
 Serial.println("inter3");
 }
@@ -107,15 +125,20 @@ Serial.println("inter3");
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 void menu_display();
 int menu_slider_calc(int *rows,int *vert_space);
-void menu_row( int lp,const char txt[],int x_start,int *actual_pos);
+void menu_row(int lp,const char txt[],int x_start,int *actual_pos);
 void submenu_type1(int *select,int *slider_pos);
 void submenu_display(int option);
 void submenu_type_def(int *select);
+void submenu_rtc(int *select,time_struct *ts);
+void submenu_gps(int *select, gps_struct *gs);
+bool gps_values_read(uint8_t selector,gps_struct *gs);
+void submenu_logic_fcn(byte *actual_row_posit,int *actual_submenu_pos);
+
 
 void rtc_read_fcn(time_struct *ts);
 bool save_value_to_sd(double value,const char *filename,bool new_line);
 bool save_char_to_sd(char *txt,const char *filename,bool new_line);
-bool gps_values_read(uint8_t selector,double *lati,double *longi,double *alti,uint8_t *day,uint8_t *month,uint16_t *year,uint8_t *hour,uint8_t *minutes,uint8_t *sec);
+//bool gps_values_read(uint8_t selector,double *lati,double *longi,double *alti,uint8_t *day,uint8_t *month,uint16_t *year,uint8_t *hour,uint8_t *minutes,uint8_t *sec);
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -131,22 +154,21 @@ void setup() {
   Serial2.begin(GPS_BAUD, SERIAL_8N1, RXD2, TXD2); //for gps communication
   rtc.set_rtc_address(0x68);
 	rtc.set_model(URTCLIB_MODEL_DS3231);
- menu_slider_height=menu_slider_calc(&menu_rows,&menu_vertical_space);
+  menu_slider_height=menu_slider_calc(&menu_rows,&menu_vertical_space);
   while(!SD.begin(SD_CS_PIN,SD_SCK_MHZ(10)))
-  {
     Serial.println("sd initialization failed!");
     
-  }
-     Serial.println("sd initialization done.");
+  
+  Serial.println("sd initialization done.");
 
   pinMode(BTN1,INPUT_PULLUP);
-   pinMode(BTN2,INPUT_PULLUP);
-    pinMode(BTN3,INPUT_PULLUP);
+  pinMode(BTN2,INPUT_PULLUP);
+  pinMode(BTN3,INPUT_PULLUP);
   
   //pinA_last=digitalRead(pinA_last);
- attachInterrupt(digitalPinToInterrupt(BTN1),isr1,FALLING);
-attachInterrupt(digitalPinToInterrupt(BTN2),isr2,FALLING);
- attachInterrupt(digitalPinToInterrupt(BTN3),isr3,FALLING);
+  attachInterrupt(digitalPinToInterrupt(BTN1),isr1,FALLING);
+  attachInterrupt(digitalPinToInterrupt(BTN2),isr2,FALLING);
+  attachInterrupt(digitalPinToInterrupt(BTN3),isr3,FALLING);
 
 
   OLED.begin(SSD1306_SWITCHCAPVCC,OLED_ADDR);
@@ -155,7 +177,7 @@ attachInterrupt(digitalPinToInterrupt(BTN2),isr2,FALLING);
   OLED.setTextWrap(false);
   OLED.setTextSize(1);
   OLED.setTextColor(WHITE);
-  flag4=1;
+  flag4=1; //screen refresh need
  //Serial.println(menu_slider_height);
 }
 
@@ -197,8 +219,7 @@ void loop()
     flag2=0;
     flag4=1;
 
-    //ac_cursor_pos=0;
-   // counter1=1;
+    //w to wejdzie jak f-submenu=0 wiec jako wcisniemy srdokowy bedac w menu glownym
    if(!flag_submenu) //when flag sumbmenu 0
    {
     flag_submenu=1; //to get into submenu
@@ -206,23 +227,12 @@ void loop()
     Serial.println(flag_submenu);
    }else//ten else musi tu byc bo bez tego po wlaczeniu submenu od razu  by z miego wyszedl
   //if(flag_submenu)
-  {
-    Serial.println("inside");
-    switch (counter_submenu)
-    {
-      case 2:
-        flag_submenu=0;
-        flag_horizontal_slider1=0;//get back to operate on vertical slider values
-      break;
+  {//to obśługa srodkowego przycisku bedac w submenu jakims
+    //Serial.println("inside");
 
-      case 3:
-        flag_horizontal_slider1=!flag_horizontal_slider1; //bez tego odwracania wartosci by sie nie dal owysjc
-      break;
+  /////////////////////////////////////////funkcja logiki poruszania po menu selecta srodkowego przycisku
+  submenu_logic_fcn(&counter1,&counter_submenu);
 
-      default: //when 1 thats exit
-      flag_submenu=0;
-      flag_horizontal_slider1=0;//get back to operate on vertical slider values
-    }
   }
      
 
@@ -275,6 +285,7 @@ void loop()
  flag4=0;
 
  //////////////////////////////////////test///////////////////////////////////////////////////////////////
+ /*
   bool flag=0;
     while (Serial2.available() > 0){
     if( gps.encode(Serial2.read())) flag =1;
@@ -328,9 +339,9 @@ void loop()
             Serial.println("no gps time found");
             save_char_to_sd((char *)"no gps time found","gps_log.txt",1);
           }
+    */
 
-
-////////////////////////////////////time block/////////////////////////////////////
+        ////////////////////////////////////time block/////////////////////////////////////
     rtc_read_fcn(&time_holder);
 
     Serial.println("RTC DateTime: ");
@@ -353,14 +364,16 @@ void loop()
   
 
 
-    flag=0;
+   // flag=0;
   //interrupts();
 
 
   }
 /////////////////////////////////////end test//////////////////////////////////////////////
 }
-}
+
+
+
 
 int menu_slider_calc(int *rows,int *vert_space)
 {
@@ -408,14 +421,15 @@ void menu_display(void)
 
 
 
-  menu_row(0,"pozycja:",0,&ac_cursor_pos);
-  menu_row(1,"opcja1",0,&ac_cursor_pos);
-  menu_row(2,"opcja2",0,&ac_cursor_pos);
-  menu_row(3,"opcja3",0,&ac_cursor_pos);
-  menu_row(4,"opcja4",0,&ac_cursor_pos);
-  menu_row(5,"opcja5",0,&ac_cursor_pos);
-  menu_row(6,"opcja6",0,&ac_cursor_pos);
-  menu_row(7,"opcja7",0,&ac_cursor_pos);
+  menu_row(MENU_ORDER_SLIDER,"slider",0,&ac_cursor_pos);
+  menu_row(MENU_ORDER_RTC,"rtc",0,&ac_cursor_pos);
+  menu_row(MENU_ORDER_GPS,"gps",0,&ac_cursor_pos);
+  menu_row(MENU_ORDER_NRF24,"NRF24",0,&ac_cursor_pos);
+  menu_row(MENU_ORDER_HC05,"HC_05",0,&ac_cursor_pos);
+  menu_row(MENU_ORDER_RF,"RF",0,&ac_cursor_pos);
+  menu_row(MENU_ORDER_EMPTY1,"empty1",0,&ac_cursor_pos);
+  menu_row(MENU_ORDER_EMPTY2,"empty2",0,&ac_cursor_pos);
+  
 
 
  OLED.display(); //output 'display buffer' to screen  
@@ -426,12 +440,15 @@ for now--1 slider menu--2 rtc time and date set/display--other default empty sub
 void submenu_display(int option)
 {
   switch (option)
-  {
-    case 1:
+  {//+1 bo counter 1 dziala na zakresie od 1 a ordery sa od zera
+    case MENU_ORDER_SLIDER+1:
     submenu_type1(&counter_submenu,&submenu_slid_pos);
     break;
-    case 2:
-    submenu_type1(&counter_submenu,&submenu_slid_pos);
+    case MENU_ORDER_RTC+1:
+    submenu_rtc(&counter_submenu,&time_holder);
+    break;
+    case MENU_ORDER_GPS+1:
+    submenu_gps(&counter_submenu,&gps_holder);
     break;
     default:
    // Serial.println("err occured i nsubmenu");
@@ -454,43 +471,150 @@ void submenu_type1(int *select,int *slider_pos)
   OLED.println("eg vert slider 1");
 
   OLED.drawLine(0,40,127,40,WHITE);
+
   switch(*select)
-  {
-  if(*select==1)
+  {    
+    case 3: //slider 
+    if(flag_horizontal_slider1) OLED.drawRect(*slider_pos+3,37,2,7,WHITE);
 
-  
-   case 3: //slider 
-   if(flag_horizontal_slider1) OLED.drawRect(*slider_pos+3,37,2,7,WHITE);
-   OLED.drawRect(*slider_pos,39,8,3,WHITE);
-  OLED.setCursor(20,25);
-  OLED.println("exit");
-  OLED.setCursor(80,25);
-  OLED.println("OK");
-   
-    break;
-  case 2: //ok btn
-   OLED.drawRect(*slider_pos,39,8,3,WHITE);
-    OLED.setCursor(20,25);
-    OLED.println("exit");
-     OLED.fillRect(79,24,30,9,WHITE);
-    OLED.setTextColor(BLACK);
-    OLED.setCursor(80,25);
-    OLED.println("OK");
-    OLED.setTextColor(WHITE);
-    break;
+      OLED.drawRect(*slider_pos,39,8,3,WHITE);
+      OLED.setCursor(20,25);
+      OLED.println("exit");
+      OLED.setCursor(80,25);
+      OLED.println("OK");
+    
+      break;
+    case 2: //ok btn
+      OLED.drawRect(*slider_pos,39,8,3,WHITE);
+      OLED.setCursor(20,25);
+      OLED.println("exit");
+      OLED.fillRect(79,24,30,9,WHITE);
+      OLED.setTextColor(BLACK);
+      OLED.setCursor(80,25);
+      OLED.println("OK");
+      OLED.setTextColor(WHITE);
+      break;
 
-  default: //jka jeden exit musi byc jako default
- OLED.drawRect(*slider_pos,39,8,3,WHITE);
-   OLED.fillRect(19,24,30,9,WHITE);
-    OLED.setTextColor(BLACK);
-    OLED.setCursor(20,25);
-    OLED.println("exit");
-    OLED.setTextColor(WHITE);
-    OLED.setCursor(80,25);
-    OLED.println("OK");
-  
+    default: //jka jeden exit musi byc jako default
+      OLED.drawRect(*slider_pos,39,8,3,WHITE);
+      OLED.fillRect(19,24,30,9,WHITE);
+      OLED.setTextColor(BLACK);
+      OLED.setCursor(20,25);
+      OLED.println("exit");
+      OLED.setTextColor(WHITE);
+      OLED.setCursor(80,25);
+      OLED.println("OK");
   }
 
+  OLED.display(); //output 'display buffer' to screen  
+}
+
+void submenu_rtc(int *select,time_struct *ts)
+{
+  const uint8_t sec_line=9,trd_line=19;
+  rtc_read_fcn(ts); //update struct values 
+  OLED.clearDisplay();
+
+  OLED.setCursor(0,0);
+  OLED.println("time menu");
+
+  if(*select>1) *select=1;
+  if(*select<1) *select=1;
+  //date printout
+  OLED.setCursor(0,sec_line);
+  OLED.println("date");
+  OLED.setCursor(25,sec_line);
+  OLED.println(ts->rtc_day);
+  OLED.setCursor(36,sec_line);
+  OLED.println(".");
+  OLED.setCursor(41,sec_line);
+  OLED.println(ts->rtc_month);
+  OLED.setCursor(51,sec_line);
+  OLED.println(".");
+  OLED.setCursor(56,sec_line);
+  OLED.println(ts->rtc_year);
+  //time printout
+  OLED.setCursor(0,trd_line);
+  OLED.println("time");
+  OLED.setCursor(25,trd_line);
+  OLED.println(ts->rtc_hour);
+  OLED.setCursor(36,trd_line);
+  OLED.println(":");
+  OLED.setCursor(41,trd_line);
+  OLED.println(ts->rtc_minutes);
+  OLED.setCursor(51,trd_line);
+  OLED.println(":");
+  OLED.setCursor(56,trd_line);
+  OLED.println(ts->rtc_seconds);
+
+    OLED.fillRect(19,54,30,9,WHITE);
+    OLED.setTextColor(BLACK);
+    OLED.setCursor(20,55);
+    OLED.println("exit");
+    OLED.setTextColor(WHITE);
+
+    OLED.display(); //output 'display buffer' to screen  
+   
+ 
+
+
+// ts->rtc_hour
+// ts->rtc_minutes
+// ts->rtc_seconds
+}
+void submenu_gps(int *select, gps_struct *gs)
+{
+  if(*select>3) *select=1;
+  if(*select<1) *select=3;
+
+  const uint8_t y_but_level=55;
+  const uint8_t x_first_btn=1;
+  const uint8_t x_sec_btn=32;
+  const uint8_t x_rd_btn=63;
+  OLED.clearDisplay();
+  //main title
+  OLED.setCursor(0,0);
+  OLED.println("gps menu");
+
+  //save to sd button
+
+
+   switch(*select)
+  {       
+    case 3: //refresh gps readout btn
+      OLED.setCursor(x_first_btn,y_but_level);
+      OLED.println("exit");
+      OLED.setCursor(x_sec_btn,y_but_level);
+      OLED.println("save");
+      OLED.fillRect(x_rd_btn-1,y_but_level-1,30,9,WHITE);
+      OLED.setTextColor(BLACK);
+      OLED.setCursor(x_rd_btn,y_but_level);
+      OLED.println("F5");
+      OLED.setTextColor(WHITE);
+      break;
+    case 2: //save btn
+      OLED.setCursor(x_first_btn,y_but_level);
+      OLED.println("exit");
+      OLED.fillRect(x_sec_btn-1,y_but_level-1,30,9,WHITE);
+      OLED.setTextColor(BLACK);
+      OLED.setCursor(x_sec_btn,y_but_level);
+      OLED.println("save");
+      OLED.setTextColor(WHITE);
+      OLED.setCursor(x_rd_btn,y_but_level);
+      OLED.println("F5");
+      break;
+
+    default: //jka jeden exit musi byc jako default
+      OLED.fillRect(x_first_btn-1,y_but_level-1,30,9,WHITE);
+      OLED.setTextColor(BLACK);
+      OLED.setCursor(x_first_btn,y_but_level);
+      OLED.println("exit");
+      OLED.setTextColor(WHITE);
+      OLED.setCursor(x_sec_btn,y_but_level);
+      OLED.println("save");
+      OLED.setCursor(x_rd_btn,y_but_level);
+      OLED.println("F5");
+  }
   OLED.display(); //output 'display buffer' to screen  
 }
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -511,46 +635,39 @@ void submenu_type_def(int *select){
     OLED.display(); //output 'display buffer' to screen  
 }
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-bool gps_values_read(uint8_t selector,double *lati,double *longi,double *alti,uint8_t *day,uint8_t *month,uint16_t *year,uint8_t *hour,uint8_t *minutes,uint8_t *sec)
+bool gps_values_read(uint8_t selector,gps_struct *gs)
 {
+
+   while (Serial2.available() > 0)
+    if(!gps.encode(Serial2.read())) return 0;
+    
   switch (selector)
   {
     case 1:
        if (!gps.location.isValid()) return 0;
-      *lati=gps.location.lat();
-      *longi=gps.location.lng();
-      *alti=gps.altitude.meters();
+      gs->gps_lati=gps.location.lat();
+      gs->gps_longi=gps.location.lng();
+      gs->gps_alti=gps.altitude.meters();
     return 1;
    
     case 2:
       if (!gps.date.isValid()) return 0;
-      *day=gps.date.month();
-      *month=gps.date.day();
-      *year=gps.date.year();
+      gs->gps_month=gps.date.month();
+      gs->gps_day=gps.date.day();
+      gs->gps_year=gps.date.year();
     return 1;
 
     case 3:
        if (!gps.time.isValid()) return 0;
-      *hour=gps.time.hour();
-      *minutes=gps.time.minute();
-      *sec=gps.time.second();
+      gs->gps_hour=gps.time.hour();
+      gs->gps_minutes=gps.time.minute();
+      gs->gps_seconds=gps.time.second();
     return 1;
 
     default:
-    *lati=0;
-    *longi=0;
-    *alti=0;
-    *day=0;
-    *month=0;
-    *year=0;
-    *hour=0;
-    *minutes=0;
-    *sec=0;
+    return 0;
     return 1;
-
-  //return 0; //if not able to connect to gps module at all chceck your connection
-
- // return 1; //i f gps detected and readout got proper values or at least detected
+ 
   }
 }
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -605,4 +722,63 @@ void rtc_read_fcn(time_struct *ts)
  ts->rtc_minutes=rtc.minute();
  ts->rtc_seconds=rtc.second();
 	
+}
+
+//counter1, counter_submenu to jest funcka obslugujaca logkige wcisniec srodkowego przycisku dla poszeglonych submenu rozniacych sie przyciskami
+//trzeba zrobi strukture struct menu_curs_n_flags i ona bedzie miec wszystkie cursory globalne i flagi słuzace do oreintacji i logiki w menu oprocz? flag od przerwan
+void submenu_logic_fcn(byte *actual_row_posit,int *actual_submenu_pos)
+{
+  //counter1
+  if(*actual_row_posit==MENU_ORDER_SLIDER+1)
+  {
+      //menu slider logic
+    switch (counter_submenu)  //&& counter1 1-8
+    {
+      case 2://ok button
+        flag_submenu=0;
+        flag_horizontal_slider1=0;//get back to operate on vertical slider values
+      break;
+
+      case 3: //get off/in the slider selection to control buttons/to control slider
+        flag_horizontal_slider1=!flag_horizontal_slider1; //bez tego odwracania wartosci by sie nie dal owysjc
+      break;
+
+      default: //when 1 thats exit
+      flag_submenu=0;
+      flag_horizontal_slider1=0;//get back to operate on vertical slider values
+    }
+  }
+  else if(*actual_row_posit==MENU_ORDER_GPS+1)
+  {
+          //menu gps logic
+    switch (counter_submenu)  //&& counter1 1-8
+    {
+      case 2://save button
+        flag_submenu=0;
+        flag_horizontal_slider1=0;//get back to operate on vertical slider values
+      break;
+
+      case 3: //refresh //po winien flage ze struktury zmienic na 1 i wywlac funcke robiaca odczyt do stuktury gps i zerujacej ta flage
+        //flag_horizontal_slider1=!flag_horizontal_slider1; //bez tego odwracania wartosci by sie nie dal owysjc
+        flag_submenu=0; //na teraz exit
+        flag_horizontal_slider1=0;
+      break;
+
+      default: //when 1 thats exit
+      flag_submenu=0;
+      flag_horizontal_slider1=0;//get back to operate on vertical slider values
+    }
+  }
+  else if(*actual_row_posit==MENU_ORDER_RTC+1)
+  {   //tylko exit na ten moment
+        flag_submenu=0;
+      flag_horizontal_slider1=0;//get back to operate on vertical slider values
+  }
+  else
+  {
+    //when only exit in menu or not defined function yet exit case 
+      flag_submenu=0;
+      flag_horizontal_slider1=0;//get back to operate on vertical slider values
+  }
+  
 }
