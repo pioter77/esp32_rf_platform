@@ -71,7 +71,7 @@ struct menu_bar{
 struct time_struct{
 
 uint8_t rtc_day,rtc_month, rtc_hour, rtc_minutes,rtc_seconds;
-uint16_t rtc_year;
+uint8_t rtc_year;
 };
 
 struct time_struct time_holder={0,0,0,0,0,0};
@@ -135,6 +135,7 @@ void submenu_gps(int *select, gps_struct *gs);
 bool gps_values_read(uint8_t selector,gps_struct *gs);
 //void submenu_logic_fcn(byte *actual_row_posit,int *actual_submenu_pos);
 void submenu_logic_fcn(byte *actual_row_posit,int *actual_submenu_pos, gps_struct *gs,time_struct *ts);
+bool log_maker(byte selector,const char *filename,gps_struct *gs,time_struct *ts);
 
 
 void rtc_read_fcn(time_struct *ts);
@@ -802,12 +803,8 @@ void submenu_logic_fcn(byte *actual_row_posit,int *actual_submenu_pos, gps_struc
       case 2://save button
        // flag_submenu=0;
         //flag_horizontal_slider1=0;//get back to operate on vertical slider values
-        gs->gps_last_pos_succ=gps_values_read(1,&gps_holder);
-        gs->gps_last_date_succ=gps_values_read(2,&gps_holder);
-        gs->gps_last_time_succ=gps_values_read(3,&gps_holder);
-        rtc_read_fcn(ts);
+      log_maker(1,"log_gps_submenu.csv",&gps_holder,&time_holder);
          
-
       break;
 
       case 3: //refresh //po winien flage ze struktury zmienic na 1 i wywlac funcke robiaca odczyt do stuktury gps i zerujacej ta flage
@@ -864,4 +861,69 @@ void submenu_logic_fcn(byte *actual_row_posit,int *actual_submenu_pos, gps_struc
       flag_horizontal_slider1=0;//get back to operate on vertical slider values
   }
   
+}
+
+bool log_maker(byte selector,const char *filename,gps_struct *gs,time_struct *ts)
+{
+  switch (selector)
+  {
+    case 1://gps menu log call
+      gs->gps_last_pos_succ=gps_values_read(1,&gps_holder);
+      gs->gps_last_date_succ=gps_values_read(2,&gps_holder);
+      gs->gps_last_time_succ=gps_values_read(3,&gps_holder);
+      rtc_read_fcn(ts);
+
+
+      myFile = SD.open(filename, FILE_WRITE);
+      if(myFile)
+      {
+        //rtc date
+        myFile.print(ts->rtc_day);
+        myFile.print(";");
+        myFile.print(ts->rtc_month);
+        myFile.print(";");
+        myFile.print(ts->rtc_year);
+        myFile.print(";");
+        //rtc time
+        myFile.print(ts->rtc_hour);
+        myFile.print(";");
+        myFile.print(ts->rtc_minutes);
+        myFile.print(";");
+        myFile.print(ts->rtc_seconds);
+        myFile.print(";");
+        //gps position
+        myFile.print(gs->gps_last_pos_succ);
+        myFile.print(";");
+        myFile.print(gs->gps_lati);
+        myFile.print(";");
+        myFile.print(gs->gps_longi);
+        myFile.print(";");
+        myFile.print(gs->gps_alti);
+        myFile.print(";");
+        //gps date
+        myFile.print(gs->gps_last_date_succ);
+        myFile.print(";");
+        myFile.print(gs->gps_day);
+        myFile.print(";");
+        myFile.print(gs->gps_month);
+        myFile.print(";");
+        myFile.print(gs->gps_year);
+        myFile.print(";");
+        //gps time
+        myFile.print(gs->gps_last_time_succ);
+        myFile.print(";");
+        myFile.print(gs->gps_hour);
+        myFile.print(";");
+        myFile.print(gs->gps_minutes);
+        myFile.print(";");
+        myFile.print(gs->gps_seconds);
+        myFile.println(";");
+
+        myFile.close();
+        return 1;//file opened succesfully and text written to it
+      }
+
+      default:
+      return 0;//file opening error
+  }
 }
