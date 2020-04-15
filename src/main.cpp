@@ -7,6 +7,8 @@
 #include <SPI.h>
 #include <SdFat.h>
 #include <uRTCLib.h>
+#include <nRF24L01.h>
+#include <RF24.h>
 
 /*
 trzeba przerobic tak by menu bylo struktura kazda struktora z wlasnym poem na zmienna na nazwe i zmienna na opcje ktore submenu ma zawierac potem
@@ -49,6 +51,7 @@ byte counter1=1;
 unsigned long time_last_buton1_pressed=0;
 unsigned long time_last_buton2_pressed=0;
 unsigned long time_last_buton3_pressed=0;
+unsigned long time_last_nrf_sent=0;
 
 //int ac_cursor_pos_prev=ac_cursor_pos;
 volatile bool flag3=0;//right button pressed flag
@@ -83,6 +86,13 @@ struct gps_struct
   uint8_t gps_day,gps_month,gps_hour,gps_minutes,gps_seconds;
   uint16_t gps_year;
 }gps_holder{0,0,0,0,0,0,0,0,0,0,0,0};
+
+struct nrf_struct
+{
+  const uint64_t pipe1;
+  const char txt[6];
+  bool status;
+}nrf_holder{0xE8E8F0F0E1LL,"12",0};
 
 
 
@@ -132,10 +142,12 @@ void submenu_display(int option);
 void submenu_type_def(int *select);
 void submenu_rtc(int *select,time_struct *ts);
 void submenu_gps(int *select, gps_struct *gs);
+void submenu_nrf(int *select, nrf_struct *ns);
 bool gps_values_read(uint8_t selector,gps_struct *gs);
 //void submenu_logic_fcn(byte *actual_row_posit,int *actual_submenu_pos);
-void submenu_logic_fcn(byte *actual_row_posit,int *actual_submenu_pos, gps_struct *gs,time_struct *ts);
-bool log_maker(byte selector,const char *filename,gps_struct *gs,time_struct *ts);
+void submenu_logic_fcn(byte *actual_row_posit,int *actual_submenu_pos, gps_struct *gs,time_struct *ts,nrf_struct *ns);
+bool log_maker(byte selector,const char *filename,gps_struct *gs,time_struct *ts,nrf_struct *ns);
+bool nrf_send_fcn(nrf_struct *ns,unsigned long *prev_time);
 
 
 void rtc_read_fcn(time_struct *ts);
@@ -150,6 +162,7 @@ TinyGPSPlus gps;
 uRTCLib rtc;
 SdFat SD;
 Adafruit_SSD1306 OLED(128,64,&Wire,OLED_RESET);
+RF24 radio(13,12);  //chip enable csn d8 d2
 
 void setup() {
   Serial.begin(115200);
@@ -180,6 +193,7 @@ void setup() {
   OLED.setTextColor(WHITE);
   flag4=1; 
  //Serial.println(menu_slider_height);
+ radio.begin(); //begin rf24 operation
 }
 
 void loop()
@@ -232,7 +246,7 @@ void loop()
     //Serial.println("inside");
 
   /////////////////////////////////////////funkcja logiki poruszania po menu selecta srodkowego przycisku
-  submenu_logic_fcn(&counter1,&counter_submenu,&gps_holder,&time_holder);
+  submenu_logic_fcn(&counter1,&counter_submenu,&gps_holder,&time_holder,&nrf_holder);
 
   }
      
@@ -286,61 +300,7 @@ void loop()
  flag4=0;
 
  //////////////////////////////////////test///////////////////////////////////////////////////////////////
- /*
-  bool flag=0;
-    while (Serial2.available() > 0){
-    if( gps.encode(Serial2.read())) flag =1;
-    }
-    if(flag)
-    {
-        //displayInfo();
-      
-          if(gps_values_read(1,&gps_lati,&gps_longi,&gps_alti,&gps_day,&gps_month,&gps_year,&gps_hour,&gps_minutes,&gps_seconds))
-          {
-            Serial.println("posit:");
-            Serial.println(gps_lati);
-            Serial.println(gps_longi);
 
-            save_char_to_sd((char *)"posit","gps_log.txt",1);
-            save_value_to_sd(gps_lati,"gps_log.txt",1);
-            save_value_to_sd(gps_longi,"gps_log.txt",1);
-          }else{
-            Serial.println("no gps pos found");
-            save_char_to_sd((char *)"no gps pos found","gps_log.txt",1);
-          }
-
-          if(gps_values_read(2,&gps_lati,&gps_longi,&gps_alti,&gps_day,&gps_month,&gps_year,&gps_hour,&gps_minutes,&gps_seconds))
-          {
-            Serial.println("date:");
-            Serial.println(gps_day);
-            Serial.println(gps_month);
-            Serial.println(gps_year);
-
-            save_char_to_sd((char *)"date","gps_log.txt",1);
-            save_value_to_sd(gps_day,"gps_log.txt",1);
-            save_value_to_sd(gps_month,"gps_log.txt",1);
-            save_value_to_sd(gps_year,"gps_log.txt",1);
-          }else{
-            Serial.println("no gps date found");
-            save_char_to_sd((char *)"no gps date found","gps_log.txt",1);
-          }
-
-          if(gps_values_read(3,&gps_lati,&gps_longi,&gps_alti,&gps_day,&gps_month,&gps_year,&gps_hour,&gps_minutes,&gps_seconds))
-          {
-            Serial.println("time::");
-            Serial.println(gps_hour);
-            Serial.println(gps_minutes);
-            Serial.println(gps_seconds);
-
-            save_char_to_sd((char *)"time","gps_log.txt",1);
-            save_value_to_sd(gps_hour,"gps_log.txt",1);
-            save_value_to_sd(gps_minutes,"gps_log.txt",1);
-            save_value_to_sd(gps_seconds,"gps_log.txt",1);
-          }else{
-            Serial.println("no gps time found");
-            save_char_to_sd((char *)"no gps time found","gps_log.txt",1);
-          }
-    */
 
         ////////////////////////////////////time block/////////////////////////////////////
     //rtc_read_fcn(&time_holder);
@@ -406,7 +366,7 @@ void menu_display(void)
   menu_row(MENU_ORDER_RTC,"rtc",0,&ac_cursor_pos);
   menu_row(MENU_ORDER_GPS,"gps",0,&ac_cursor_pos);
   menu_row(MENU_ORDER_NRF24,"NRF24",0,&ac_cursor_pos);
-  menu_row(MENU_ORDER_HC05,"HC_05",0,&ac_cursor_pos);
+  menu_row(MENU_ORDER_HC05,"HC_12",0,&ac_cursor_pos);
   menu_row(MENU_ORDER_RF,"RF",0,&ac_cursor_pos);
   menu_row(MENU_ORDER_EMPTY1,"empty1",0,&ac_cursor_pos);
   menu_row(MENU_ORDER_EMPTY2,"empty2",0,&ac_cursor_pos);
@@ -430,6 +390,9 @@ void submenu_display(int option)
     break;
     case MENU_ORDER_GPS+1:
     submenu_gps(&counter_submenu,&gps_holder);
+    break;
+    case MENU_ORDER_NRF24+1:
+    submenu_nrf(&counter_submenu,&nrf_holder);
     break;
     default:
    // Serial.println("err occured i nsubmenu");
@@ -605,26 +568,28 @@ void submenu_gps(int *select, gps_struct *gs)
   OLED.setCursor(x_readout_pos,y_readout_pos);
   OLED.println("lat:");
   OLED.setCursor(x_readout_pos+x_shift,y_readout_pos);
-  if(gs->gps_last_pos_succ)
-  OLED.println(gs->gps_lati);
-  else
-  OLED.println(err_msg);
-
+  if(gs->gps_last_pos_succ){
+    OLED.println(gs->gps_lati);
+  }else{
+    OLED.println(err_msg);
+  }
   OLED.setCursor(x_readout_pos,y_readout_pos+y_shift);
   OLED.println("long:");
   OLED.setCursor(x_readout_pos+x_shift,y_readout_pos+y_shift);
-  if(gs->gps_last_pos_succ)
-  OLED.println(gs->gps_longi);
-  else
-  OLED.println(err_msg);
-
+  if(gs->gps_last_pos_succ){
+    OLED.println(gs->gps_longi);
+  }else{
+    OLED.println(err_msg);
+  }
   OLED.setCursor(x_readout_pos,y_readout_pos+2*y_shift);
   OLED.println("alt:");
   OLED.setCursor(x_readout_pos+x_shift,y_readout_pos+2*y_shift);
   if(gs->gps_last_pos_succ)
-  OLED.println(gs->gps_alti);
-  else
-  OLED.println(err_msg);
+  {
+    OLED.println(gs->gps_alti);
+  }else{
+    OLED.println(err_msg);
+  }
   //buttons display
     switch(*select)
   {       
@@ -693,7 +658,7 @@ bool gps_values_read(uint8_t selector,gps_struct *gs)
   switch (selector)
   {
     case 1:
-       if (!gps.location.isValid()) return 0;
+      if (!gps.location.isValid()) return 0;
       gs->gps_lati=gps.location.lat();
       gs->gps_longi=gps.location.lng();
       gs->gps_alti=gps.altitude.meters();
@@ -773,7 +738,7 @@ void rtc_read_fcn(time_struct *ts)
 
 //counter1, counter_submenu to jest funcka obslugujaca logkige wcisniec srodkowego przycisku dla poszeglonych submenu rozniacych sie przyciskami
 //trzeba zrobi strukture struct menu_curs_n_flags i ona bedzie miec wszystkie cursory globalne i flagi słuzace do oreintacji i logiki w menu oprocz? flag od przerwan
-void submenu_logic_fcn(byte *actual_row_posit,int *actual_submenu_pos, gps_struct *gs,time_struct *ts)
+void submenu_logic_fcn(byte *actual_row_posit,int *actual_submenu_pos, gps_struct *gs,time_struct *ts,nrf_struct *ns)
 {
   //counter1
   if(*actual_row_posit==MENU_ORDER_SLIDER+1)
@@ -803,7 +768,7 @@ void submenu_logic_fcn(byte *actual_row_posit,int *actual_submenu_pos, gps_struc
       case 2://save button
        // flag_submenu=0;
         //flag_horizontal_slider1=0;//get back to operate on vertical slider values
-      log_maker(1,"log_gps_submenu.csv",&gps_holder,&time_holder);
+      log_maker(1,"log_gps_submenu.csv",&gps_holder,&time_holder,&nrf_holder);
          
       break;
 
@@ -854,6 +819,36 @@ void submenu_logic_fcn(byte *actual_row_posit,int *actual_submenu_pos, gps_struc
       flag_horizontal_slider1=0;//get back to operate on vertical slider values
     }
   }
+  else if(*actual_row_posit==MENU_ORDER_NRF24+1)
+  {
+          //menu gps logic
+    switch (counter_submenu)  //&& counter1 1-8
+    {
+      case 2://save button
+       // flag_submenu=0;
+        //flag_horizontal_slider1=0;//get back to operate on vertical slider values
+          gs->gps_last_pos_succ=gps_values_read(1,&gps_holder);
+        gs->gps_last_date_succ=gps_values_read(2,&gps_holder);
+        gs->gps_last_time_succ=gps_values_read(3,&gps_holder);
+      log_maker(2,"log_nrf24_submenu.csv",&gps_holder,&time_holder,&nrf_holder);
+         
+      break;
+
+      case 3: //refresh //po winien flage ze struktury zmienic na 1 i wywlac funcke robiaca odczyt do stuktury gps i zerujacej ta flage
+        //flag_horizontal_slider1=!flag_horizontal_slider1; //bez tego odwracania wartosci by sie nie dal owysjc
+        flag4=1; //refresh the screen
+       // flag_submenu=1;
+      nrf_send_fcn(&nrf_holder,&time_last_nrf_sent);
+        //debug:
+    
+       // flag_horizontal_slider1=0;
+      break;
+
+      default: //when 1 thats exit
+      flag_submenu=0;
+      flag_horizontal_slider1=0;//get back to operate on vertical slider values
+    }
+  }
   else
   {
     //when only exit in menu or not defined function yet exit case 
@@ -863,7 +858,7 @@ void submenu_logic_fcn(byte *actual_row_posit,int *actual_submenu_pos, gps_struc
   
 }
 
-bool log_maker(byte selector,const char *filename,gps_struct *gs,time_struct *ts)
+bool log_maker(byte selector,const char *filename,gps_struct *gs,time_struct *ts,nrf_struct *ns)
 {
   switch (selector)
   {
@@ -922,8 +917,158 @@ bool log_maker(byte selector,const char *filename,gps_struct *gs,time_struct *ts
         myFile.close();
         return 1;//file opened succesfully and text written to it
       }
+    case 2://nrf24 menu log call
+      gs->gps_last_pos_succ=gps_values_read(1,&gps_holder);
+      gs->gps_last_date_succ=gps_values_read(2,&gps_holder);
+      gs->gps_last_time_succ=gps_values_read(3,&gps_holder);
+      rtc_read_fcn(ts);
 
+
+      myFile = SD.open(filename, FILE_WRITE);
+      if(myFile)
+      {
+        //rtc date
+        myFile.print(ts->rtc_day);
+        myFile.print(";");
+        myFile.print(ts->rtc_month);
+        myFile.print(";");
+        myFile.print(ts->rtc_year);
+        myFile.print(";");
+        //rtc time
+        myFile.print(ts->rtc_hour);
+        myFile.print(";");
+        myFile.print(ts->rtc_minutes);
+        myFile.print(";");
+        myFile.print(ts->rtc_seconds);
+        myFile.print(";");
+        //gps position
+        myFile.print(gs->gps_last_pos_succ);
+        myFile.print(";");
+        myFile.print(gs->gps_lati);
+        myFile.print(";");
+        myFile.print(gs->gps_longi);
+        myFile.print(";");
+        myFile.print(gs->gps_alti);
+        myFile.print(";");
+        //gps date
+        myFile.print(gs->gps_last_date_succ);
+        myFile.print(";");
+        myFile.print(gs->gps_day);
+        myFile.print(";");
+        myFile.print(gs->gps_month);
+        myFile.print(";");
+        myFile.print(gs->gps_year);
+        myFile.print(";");
+        //gps time
+        myFile.print(gs->gps_last_time_succ);
+        myFile.print(";");
+        myFile.print(gs->gps_hour);
+        myFile.print(";");
+        myFile.print(gs->gps_minutes);
+        myFile.print(";");
+        myFile.print(gs->gps_seconds);
+        myFile.println(";");
+         //nrf24 status
+        myFile.print(ns->status);
+        myFile.print(";");
+        myFile.print(ns->txt);
+        myFile.println(";");
+
+        myFile.close();
+        return 1;//file opened succesfully and text written to it
+      }
       default:
       return 0;//file opening error
   }
+}
+
+void submenu_nrf(int *select,nrf_struct *ns)
+{
+  const uint8_t sec_line=9,trd_line=19;
+  //const for positioning buttons
+  const uint8_t y_but_level=55;
+  const uint8_t x_first_btn=1;
+  const uint8_t x_sec_btn=32;
+  const uint8_t x_rd_btn=63;
+  //thxt in buttons
+  const char btn1_t[]= "exit";
+  const char btn2_t[]="log";
+  const char btn3_t[]="change";
+  //rtc_read_fcn(ts); //update struct values 
+  OLED.clearDisplay();
+
+  OLED.setCursor(0,0);
+  OLED.println("NRF_24 menu");
+
+  if(*select>3) *select=3;
+  if(*select<1) *select=1;
+  //date printout
+  OLED.setCursor(0,sec_line);
+  OLED.println("status:");
+  OLED.setCursor(55,sec_line);
+  OLED.println(ns->status);
+ 
+  //time printout
+  OLED.setCursor(0,trd_line);
+  OLED.println("status:");
+  OLED.setCursor(55,trd_line);
+  OLED.println(ns->status);
+ 
+
+  //button display
+     switch(*select)
+  {       
+    case 3: //refresh gps readout btn
+      OLED.setCursor(x_first_btn,y_but_level);
+      OLED.println(btn1_t);
+      OLED.setCursor(x_sec_btn,y_but_level);
+      OLED.println(btn2_t);
+      OLED.fillRect(x_rd_btn-1,y_but_level-1,30,9,WHITE);
+      OLED.setTextColor(BLACK);
+      OLED.setCursor(x_rd_btn,y_but_level);
+      OLED.println(btn3_t);
+      OLED.setTextColor(WHITE);
+      break;
+    case 2: //save btn
+      OLED.setCursor(x_first_btn,y_but_level);
+      OLED.println(btn1_t);
+      OLED.fillRect(x_sec_btn-1,y_but_level-1,30,9,WHITE);
+      OLED.setTextColor(BLACK);
+      OLED.setCursor(x_sec_btn,y_but_level);
+      OLED.println(btn2_t);
+      OLED.setTextColor(WHITE);
+      OLED.setCursor(x_rd_btn,y_but_level);
+      OLED.println(btn3_t);
+      break;
+
+    default: //jka jeden exit musi byc jako default
+      OLED.fillRect(x_first_btn-1,y_but_level-1,30,9,WHITE);
+      OLED.setTextColor(BLACK);
+      OLED.setCursor(x_first_btn,y_but_level);
+      OLED.println(btn1_t);
+      OLED.setTextColor(WHITE);
+      OLED.setCursor(x_sec_btn,y_but_level);
+      OLED.println(btn2_t);
+      OLED.setCursor(x_rd_btn,y_but_level);
+      OLED.println(btn3_t);
+  }
+OLED.display(); //output 'display buffer' to screen  
+}
+
+bool nrf_send_fcn(nrf_struct *ns,unsigned long *prev_time)
+{
+  radio.setChannel(2);
+  radio.setPayloadSize(7);
+  radio.setDataRate(RF24_250KBPS);
+  radio.openWritingPipe(ns->pipe1);
+
+
+  unsigned long tmp=millis();
+  if(tmp-*prev_time>500)
+  {
+    radio.write(ns->txt, 6);
+    ns->status=!ns->status;
+    *prev_time=millis();
+  }
+  return 1;
 }
